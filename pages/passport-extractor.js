@@ -14,19 +14,6 @@ const MODEL_OPTIONS = [
     helper: 'Small local Qwen model. Use this only if your Ollama model supports the selected task.',
   },
 ];
-const DEFAULT_ENGINE_OPTIONS = [
-  {
-    label: 'VLM extraction',
-    value: 'vlm',
-    helper: 'Uses the selected vision model to return structured passport fields.',
-  },
-  {
-    label: 'PaddleOCR text',
-    value: 'paddleocr',
-    helper: 'Runs Arabic + English OCR and displays raw text blocks. Default mode only.',
-  },
-];
-
 export default function PassportExtractorPage() {
   const [tab, setTab] = useState('create');
   const [error, setError] = useState(null);
@@ -236,7 +223,6 @@ function formatMs(value) {
 
 function modelTimeLabel(meta) {
   if (formatMs(meta?.model_ms)) return `model ${formatMs(meta.model_ms)}`;
-  if (formatMs(meta?.paddle_ocr_ms)) return `PaddleOCR ${formatMs(meta.paddle_ocr_ms)}`;
   return null;
 }
 
@@ -612,7 +598,6 @@ function ExtractTab({ selectedTemplateId, setSelectedTemplateId, setTab, selecte
   const [loading, setLoading] = useState(false);
   const [results, setResults] = useState(null);
   const [loaded, setLoaded] = useState(false);
-  const [defaultEngine, setDefaultEngine] = useState(DEFAULT_ENGINE_OPTIONS[0].value);
 
   useEffect(() => {
     const nextTemplates = loadTemplates();
@@ -636,7 +621,6 @@ function ExtractTab({ selectedTemplateId, setSelectedTemplateId, setTab, selecte
         mode: 'extract',
         imageBase64: base64,
         imageMimeType: mimeType,
-        engine: selectedTemplate ? 'vlm' : defaultEngine,
         model: selectedModel,
         systemPrompt: selectedTemplate
           ? selectedFields.length
@@ -662,7 +646,7 @@ function ExtractTab({ selectedTemplateId, setSelectedTemplateId, setTab, selecte
     } finally {
       setLoading(false);
     }
-  }, [defaultEngine, imageFile, selectedFields, selectedModel, selectedTemplate, setError, setSuccess]);
+  }, [imageFile, selectedFields, selectedModel, selectedTemplate, setError, setSuccess]);
 
   if (!loaded) {
     return <div className="pe-loading">Loading templates...</div>;
@@ -711,23 +695,6 @@ function ExtractTab({ selectedTemplateId, setSelectedTemplateId, setTab, selecte
             <>
               <span>Default output</span>
               <p>Document number, names, dates, places, authority fields, visible IDs, and MRZ lines.</p>
-              <label className="pe-field pe-field-compact">
-                <span>Default extraction engine</span>
-                <select
-                  value={defaultEngine}
-                  onChange={(event) => {
-                    setDefaultEngine(event.target.value);
-                    setResults(null);
-                  }}
-                >
-                  {DEFAULT_ENGINE_OPTIONS.map((option) => (
-                    <option key={option.value} value={option.value}>
-                      {option.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <p>{DEFAULT_ENGINE_OPTIONS.find((option) => option.value === defaultEngine)?.helper}</p>
             </>
           )}
         </div>
@@ -771,18 +738,10 @@ function ExtractTab({ selectedTemplateId, setSelectedTemplateId, setTab, selecte
         <p className="pe-template-summary">
           {selectedTemplate
             ? `Template fields: ${selectedFields.map((field) => field.label).join(', ')}`
-            : `Default mode: ${DEFAULT_ENGINE_OPTIONS.find((option) => option.value === defaultEngine)?.label}.`}
+            : 'Default mode: VLM extraction.'}
         </p>
         <p className="pe-template-summary">
-          {selectedTemplate || defaultEngine === 'vlm' ? (
-            <>
-              Inference model: <code>{selectedModel}</code>
-            </>
-          ) : (
-            <>
-              OCR engine: <code>PaddleOCR</code>
-            </>
-          )}
+          Inference model: <code>{selectedModel}</code>
         </p>
         <div className="pe-upload-zone" onClick={() => chooseImage((file) => {
           setImageFile(file);
