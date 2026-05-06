@@ -1,51 +1,63 @@
-# Passport Extractor
+# Local OCR Passport Extractor
 
-This is a minimal Next.js app that keeps only the passport extractor feature.
+Minimal Next.js UI for extracting passport fields with local Ollama models.
 
-## Routes
+## Prerequisites
 
-- `/` renders the passport extractor page
-- `/passport-extractor` renders the same page
+- Node.js 20+
+- npm
+- Ollama running locally
+- No Python `requirements.txt` is needed for the current `vlm-qwen` branch
 
-## Setup
-
-1. Install dependencies:
+## Install App Dependencies
 
 ```bash
 npm install
-```
-
-2. Create your local env file:
-
-```bash
 cp .env.example .env.local
 ```
 
-3. Configure the local Ollama OpenAI-compatible endpoint:
+Default `.env.local`:
 
 ```bash
 OLLAMA_BASE_URL=http://localhost:11434/v1
 OLLAMA_API_KEY=ollama
 OLLAMA_MODEL=qwen2.5vl:7b
 OLLAMA_TIMEOUT_MS=120000
+OLLAMA_KEEP_ALIVE=30m
+OLLAMA_MAX_TOKENS=1024
 ```
 
-Make sure Ollama is running and the model is available:
+## Install Ollama Models
 
 ```bash
-ollama serve
+ollama pull qwen2.5vl:7b
+ollama pull qwen3.5:2b
 ollama list
 ```
 
-## Run
+Use `qwen2.5vl:7b` for direct image extraction. `qwen3.5:2b` is available in the selector, but use it only if your local model/runtime supports the selected inference path.
+
+## Start The UI
+
+In one terminal, start Ollama if it is not already running:
+
+```bash
+ollama serve
+```
+
+In the app folder:
 
 ```bash
 npm run dev
 ```
 
-Open `http://localhost:3000`.
+Open:
 
-## Build
+```text
+http://localhost:3000/passport-extractor
+```
+
+## Build Check
 
 ```bash
 npm run build
@@ -53,8 +65,8 @@ npm run build
 
 ## Notes
 
-- The template list is stored in `localStorage` under `pe_templates`.
+- Templates are stored in browser `localStorage` under `pe_templates`.
+- The Extract tab supports saved templates or default `Extract all visible fields` mode.
 - The API route is `POST /api/passport-extractor`.
-- The app calls Ollama's OpenAI-compatible `/chat/completions` endpoint with `qwen2.5vl:7b`.
-- The API has three modes: `health` for text inference checks, `detect` for template creation, and `extract` for template-based passport inference.
-- Saved templates include normalized field keys, labels, and the extraction system prompt used for later inference.
+- Requests send `think:false`, `keep_alive`, and `max_tokens` to Ollama.
+- The UI displays total processing time and model API time after extraction.

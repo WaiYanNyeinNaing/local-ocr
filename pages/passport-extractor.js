@@ -2,12 +2,25 @@ import { useCallback, useEffect, useState } from 'react';
 import Head from 'next/head';
 
 const STORAGE_KEY = 'pe_templates';
+const MODEL_OPTIONS = [
+  {
+    label: 'Qwen2.5-VL 7B',
+    value: 'qwen2.5vl:7b',
+    helper: 'Vision model for direct passport image extraction.',
+  },
+  {
+    label: 'Qwen/Qwen3.5-2B',
+    value: 'qwen3.5:2b',
+    helper: 'Small local Qwen model. Use this only if your Ollama model supports the selected task.',
+  },
+];
 
 export default function PassportExtractorPage() {
   const [tab, setTab] = useState('create');
   const [error, setError] = useState(null);
   const [success, setSuccess] = useState(null);
   const [selectedTemplateId, setSelectedTemplateId] = useState('');
+  const [selectedModel, setSelectedModel] = useState(MODEL_OPTIONS[0].value);
 
   return (
     <>
@@ -29,7 +42,7 @@ export default function PassportExtractorPage() {
           </p>
         </section>
 
-        <ModelStatus setError={setError} />
+        <ModelStatus selectedModel={selectedModel} setSelectedModel={setSelectedModel} />
 
         <nav className="pe-tabs" aria-label="Passport extractor modes">
           <button className={`pe-tab ${tab === 'create' ? 'active' : ''}`} onClick={() => setTab('create')}>
@@ -47,7 +60,7 @@ export default function PassportExtractorPage() {
         {success && <div className="pe-banner pe-success">{success}</div>}
 
         <section className="pe-panel">
-          {tab === 'create' && <CreateTab setError={setError} setSuccess={setSuccess} />}
+          {tab === 'create' && <CreateTab selectedModel={selectedModel} setError={setError} setSuccess={setSuccess} />}
           {tab === 'templates' && (
             <TemplatesTab
               setTab={setTab}
@@ -61,6 +74,7 @@ export default function PassportExtractorPage() {
               selectedTemplateId={selectedTemplateId}
               setSelectedTemplateId={setSelectedTemplateId}
               setTab={setTab}
+              selectedModel={selectedModel}
               setError={setError}
               setSuccess={setSuccess}
             />
@@ -191,14 +205,21 @@ function parseExtractionResult(result) {
 
   if (result && typeof result === 'object') {
     return Object.entries(result)
-      .filter(([key]) => key !== 'detected_fields' && key !== 'extracted_fields')
+      .filter(([key]) => key !== 'detected_fields' && key !== 'extracted_fields' && key !== '_meta')
       .map(([field_name, value]) => ({
         field_name,
-        value: typeof value === 'object' ? JSON.stringify(value) : String(value),
+        value: value == null ? null : typeof value === 'object' ? JSON.stringify(value) : String(value),
       }));
   }
 
   return [];
+}
+
+function formatMs(value) {
+  const ms = Number(value);
+  if (!Number.isFinite(ms)) return null;
+  if (ms < 1000) return `${Math.round(ms)} ms`;
+  return `${(ms / 1000).toFixed(1)} sec`;
 }
 
 function chooseImage(onPick) {
@@ -282,51 +303,49 @@ async function callApi(payload) {
   return data;
 }
 
-function ModelStatus({ setError }) {
-  const [checking, setChecking] = useState(false);
-  const [status, setStatus] = useState(null);
-
-  const handleCheck = useCallback(async () => {
-    setChecking(true);
-    setError(null);
-
-    try {
-      const result = await callApi({ mode: 'health' });
-      setStatus(result);
-    } catch (error) {
-      setStatus(null);
-      setError(error.message);
-    } finally {
-      setChecking(false);
-    }
-  }, [setError]);
+function ModelStatus({ selectedModel, setSelectedModel }) {
+  const selectedOption = MODEL_OPTIONS.find((option) => option.value === selectedModel) || MODEL_OPTIONS[0];
 
   return (
     <section className="pe-model-card">
       <div>
         <strong>Local inference</strong>
-        <p>Ollama OpenAI-compatible API, default model <code>qwen2.5vl:7b</code>.</p>
+        <p>
+          Ollama OpenAI-compatible API using <code>{selectedModel}</code>.
+        </p>
+        <label className="pe-field">
+          <span>Inference model</span>
+          <select
+            value={selectedModel}
+            onChange={(event) => setSelectedModel(event.target.value)}
+          >
+            {MODEL_OPTIONS.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </select>
+        </label>
+        <p>{selectedOption.helper}</p>
       </div>
-      <button className="pe-button pe-button-secondary" onClick={handleCheck} disabled={checking}>
-        {checking ? 'Testing...' : 'Test inference'}
-      </button>
-      {status?.ok && <span className="pe-model-ok">{status.model || 'Model'} ready</span>}
     </section>
   );
 }
 
-function CreateTab({ setError, setSuccess }) {
+function CreateTab({ selectedModel, setError, setSuccess }) {
   const [templateName, setTemplateName] = useState('');
   const [fieldInput, setFieldInput] = useState('');
   const [imageFile, setImageFile] = useState(null);
   const [imagePreview, setImagePreview] = useState(null);
   const [loading, setLoading] = useState(false);
   const [detected, setDetected] = useState(null);
+  const [runMeta, setRunMeta] = useState(null);
   const [step, setStep] = useState('upload');
 
   const handleImage = useCallback((file) => {
     setImageFile(file);
     setDetected(null);
+    setRunMeta(null);
     setStep('upload');
     fileToDataUrl(file).then(setImagePreview);
   }, []);
@@ -341,12 +360,14 @@ function CreateTab({ setError, setSuccess }) {
     setError(null);
 
     try {
+      const startedAt = performance.now();
       const { base64, mimeType } = await compressImage(imageFile);
       const result = await callApi({
         mode: 'detect',
         imageBase64: base64,
         imageMimeType: mimeType,
         fields: fieldInput.trim(),
+        model: selectedModel,
       });
 
       const detectedFields = normalizeFieldSchema(result.detected_fields);
@@ -355,6 +376,10 @@ function CreateTab({ setError, setSuccess }) {
         throw new Error('No fields were detected. Make the description more specific.');
       }
 
+      setRunMeta({
+        ...(result._meta || {}),
+        client_processing_ms: Math.round(performance.now() - startedAt),
+      });
       setDetected(detectedFields);
       setStep('preview');
     } catch (error) {
@@ -362,7 +387,7 @@ function CreateTab({ setError, setSuccess }) {
     } finally {
       setLoading(false);
     }
-  }, [fieldInput, imageFile, setError, templateName]);
+  }, [fieldInput, imageFile, selectedModel, setError, templateName]);
 
   const handleSave = useCallback(() => {
     if (!detected?.length) return;
@@ -375,6 +400,7 @@ function CreateTab({ setError, setSuccess }) {
     upsertTemplate({
       name: templateName,
       promptVersion: 2,
+      model: selectedModel,
       fieldSchema,
       fieldLabels,
       fieldKeys,
@@ -388,7 +414,8 @@ function CreateTab({ setError, setSuccess }) {
     setImageFile(null);
     setImagePreview(null);
     setDetected(null);
-  }, [detected, setSuccess, templateName]);
+    setRunMeta(null);
+  }, [detected, selectedModel, setSuccess, templateName]);
 
   const reset = useCallback(() => {
     setStep('upload');
@@ -397,6 +424,7 @@ function CreateTab({ setError, setSuccess }) {
     setImageFile(null);
     setImagePreview(null);
     setDetected(null);
+    setRunMeta(null);
   }, []);
 
   return (
@@ -455,6 +483,15 @@ function CreateTab({ setError, setSuccess }) {
           <h2>3. Preview & confirm</h2>
           {imagePreview && <img src={imagePreview} alt="Passport preview" className="pe-preview pe-preview-large" />}
           <div className="pe-results">
+            {runMeta && (
+              <div className="pe-result-row">
+                <span className="pe-result-name">Processing time</span>
+                <span className="pe-result-value">
+                  {formatMs(runMeta.client_processing_ms)}
+                  {formatMs(runMeta.model_ms) ? ` (model ${formatMs(runMeta.model_ms)})` : ''}
+                </span>
+              </div>
+            )}
             {detected.map((item) => (
               <div className="pe-result-row" key={item.field_name}>
                 <span className="pe-result-name">{item.label || item.field_name}</span>
@@ -550,7 +587,7 @@ function TemplatesTab({ setTab, setError, setSuccess, setSelectedTemplateId }) {
   );
 }
 
-function ExtractTab({ selectedTemplateId, setSelectedTemplateId, setTab, setError, setSuccess }) {
+function ExtractTab({ selectedTemplateId, setSelectedTemplateId, setTab, selectedModel, setError, setSuccess }) {
   const [templates, setTemplates] = useState([]);
   const [imageFile, setImageFile] = useState(null);
   const [imagePreview, setImagePreview] = useState(null);
@@ -561,112 +598,192 @@ function ExtractTab({ selectedTemplateId, setSelectedTemplateId, setTab, setErro
   useEffect(() => {
     const nextTemplates = loadTemplates();
     setTemplates(nextTemplates);
-    if (!selectedTemplateId && nextTemplates[0]?.id) {
-      setSelectedTemplateId(nextTemplates[0].id);
-    }
     setLoaded(true);
-  }, [selectedTemplateId, setSelectedTemplateId]);
+  }, []);
 
   const selectedTemplate = templates.find((template) => template.id === selectedTemplateId) || null;
   const selectedFields = fieldsForTemplate(selectedTemplate);
 
   const handleExtract = useCallback(async () => {
-    if (!selectedTemplate || !imageFile) return;
+    if (!imageFile) return;
 
     setLoading(true);
     setError(null);
 
     try {
+      const startedAt = performance.now();
       const { base64, mimeType } = await compressImage(imageFile);
       const result = await callApi({
         mode: 'extract',
         imageBase64: base64,
         imageMimeType: mimeType,
-        systemPrompt: selectedFields.length
-          ? buildSystemPrompt(selectedTemplate.name, selectedFields)
-          : selectedTemplate.systemPrompt,
+        model: selectedModel,
+        systemPrompt: selectedTemplate
+          ? selectedFields.length
+            ? buildSystemPrompt(selectedTemplate.name, selectedFields)
+            : selectedTemplate.systemPrompt
+          : undefined,
       });
 
       setResults({
         fields: parseExtractionResult(result),
-        raw: result,
+        raw: {
+          ...result,
+          _meta: {
+            ...(result._meta || {}),
+            client_processing_ms: Math.round(performance.now() - startedAt),
+          },
+        },
       });
 
-      setSuccess('Extraction complete.');
+      setSuccess(selectedTemplate ? 'Template extraction complete.' : 'Default extraction complete.');
     } catch (error) {
       setError(error.message);
     } finally {
       setLoading(false);
     }
-  }, [imageFile, selectedFields, selectedTemplate, setError, setSuccess]);
+  }, [imageFile, selectedFields, selectedModel, selectedTemplate, setError, setSuccess]);
 
   if (!loaded) {
     return <div className="pe-loading">Loading templates...</div>;
   }
 
-  if (!templates.length) {
-    return (
-      <div className="pe-empty">
-        <p>No templates available.</p>
-        <button className="pe-button" onClick={() => setTab('create')}>
-          Create template
-        </button>
-      </div>
-    );
-  }
-
   return (
     <div className="pe-grid">
       <section className="pe-card">
-        <h2>1. Select a template</h2>
-        <div className="pe-template-grid">
-          {templates.map((template) => (
-            <button
-              key={template.id}
-              className={`pe-template-card ${selectedTemplateId === template.id ? 'selected' : ''}`}
-              onClick={() => {
-                setSelectedTemplateId(template.id);
-                setResults(null);
-              }}
-            >
-              <h3>{template.name}</h3>
-              <p>{fieldsForTemplate(template).map((field) => field.label).join(', ')}</p>
-            </button>
-          ))}
+        <h2>1. Select extraction mode</h2>
+        <div className="pe-mode-picker">
+          <button
+            className={`pe-mode-default ${!selectedTemplateId ? 'selected' : ''}`}
+            onClick={() => {
+              setSelectedTemplateId('');
+              setResults(null);
+            }}
+          >
+            <span className="pe-mode-eyebrow">Default</span>
+            <strong>Extract all visible fields</strong>
+            <span>No template needed. The VLM returns every passport field it can read.</span>
+          </button>
+
+          <div className="pe-mode-template-panel">
+            <label className="pe-field pe-field-compact">
+              <span>Saved template</span>
+              <select
+                value={selectedTemplateId}
+                onChange={(event) => {
+                  setSelectedTemplateId(event.target.value);
+                  setResults(null);
+                }}
+                disabled={!templates.length}
+              >
+                <option value="">No template - extract all fields</option>
+                {templates.map((template) => (
+                  <option key={template.id} value={template.id}>
+                    {template.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
         </div>
+
+        <div className="pe-mode-preview">
+          {selectedTemplate ? (
+            <>
+              <span>Fields</span>
+              <div className="pe-chip-list">
+                {selectedFields.map((field) => (
+                  <span className="pe-chip" key={field.key}>
+                    {field.label}
+                  </span>
+                ))}
+              </div>
+            </>
+          ) : (
+            <>
+              <span>Default output</span>
+              <p>Document number, names, dates, places, authority fields, visible IDs, and MRZ lines.</p>
+            </>
+          )}
+        </div>
+
+        {templates.length > 0 && (
+          <details className="pe-template-browser">
+            <summary>Browse {templates.length} saved template{templates.length === 1 ? '' : 's'}</summary>
+            <div className="pe-template-grid pe-template-grid-compact">
+              {templates.map((template) => (
+                <button
+                  key={template.id}
+                  className={`pe-template-card ${selectedTemplateId === template.id ? 'selected' : ''}`}
+                  onClick={() => {
+                    setSelectedTemplateId(template.id);
+                    setResults(null);
+                  }}
+                >
+                  <h3>{template.name}</h3>
+                  <p>{fieldsForTemplate(template).map((field) => field.label).join(', ')}</p>
+                </button>
+              ))}
+            </div>
+          </details>
+        )}
+
+        {!templates.length && (
+          <div className="pe-mode-empty">
+            <p>No saved templates yet. Default extraction is ready.</p>
+            <button
+              className="pe-button pe-button-secondary"
+              onClick={() => setTab('create')}
+            >
+              Create a template
+            </button>
+          </div>
+        )}
       </section>
 
-      {selectedTemplate && (
-        <section className="pe-card">
-          <h2>2. Upload a new passport</h2>
-          <p className="pe-template-summary">
-            Template fields: {selectedFields.map((field) => field.label).join(', ')}
-          </p>
-          <div className="pe-upload-zone" onClick={() => chooseImage((file) => {
-            setImageFile(file);
-            setResults(null);
-            fileToDataUrl(file).then(setImagePreview);
-          })}>
-            {imagePreview ? (
-              <>
-                <img src={imagePreview} alt="Passport upload preview" className="pe-preview" />
-                <p>{imageFile?.name}</p>
-              </>
-            ) : (
-              <p>Drop a passport image here, or click to browse.</p>
-            )}
-          </div>
-          <button className="pe-button" onClick={handleExtract} disabled={loading || !imageFile}>
-            {loading ? 'Extracting...' : 'Extract fields'}
-          </button>
-        </section>
-      )}
+      <section className="pe-card">
+        <h2>2. Upload a new passport</h2>
+        <p className="pe-template-summary">
+          {selectedTemplate
+            ? `Template fields: ${selectedFields.map((field) => field.label).join(', ')}`
+            : 'Default mode: extract all visible passport fields.'}
+        </p>
+        <p className="pe-template-summary">
+          Inference model: <code>{selectedModel}</code>
+        </p>
+        <div className="pe-upload-zone" onClick={() => chooseImage((file) => {
+          setImageFile(file);
+          setResults(null);
+          fileToDataUrl(file).then(setImagePreview);
+        })}>
+          {imagePreview ? (
+            <>
+              <img src={imagePreview} alt="Passport upload preview" className="pe-preview" />
+              <p>{imageFile?.name}</p>
+            </>
+          ) : (
+            <p>Drop a passport image here, or click to browse.</p>
+          )}
+        </div>
+        <button className="pe-button" onClick={handleExtract} disabled={loading || !imageFile}>
+          {loading ? 'Extracting...' : selectedTemplate ? 'Extract template fields' : 'Extract all fields'}
+        </button>
+      </section>
 
       {results && (
         <section className="pe-card pe-card-wide">
           <h2>3. Extracted fields</h2>
           {results.fields.length > 0 ? (
             <div className="pe-results">
+              {results.raw?._meta && (
+                <div className="pe-result-row">
+                  <span className="pe-result-name">Processing time</span>
+                  <span className="pe-result-value">
+                    {formatMs(results.raw._meta.client_processing_ms)}
+                    {formatMs(results.raw._meta.model_ms) ? ` (model ${formatMs(results.raw._meta.model_ms)})` : ''}
+                  </span>
+                </div>
+              )}
               {results.fields.map((field) => (
                 <div className="pe-result-row" key={field.field_name}>
                   <span className="pe-result-name">{String(field.label || field.field_name).replace(/_/g, ' ')}</span>
