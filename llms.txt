@@ -1,0 +1,35 @@
+Local OCR Passport Extractor for passport-field extraction with local Ollama VLMs and optional PaddleOCR in default no-template mode.
+
+Primary docs
+- README.md
+- AGENTS.md
+
+Key paths
+- pages/passport-extractor.js: main UI
+- pages/api/passport-extractor.js: API route for health, detect, extract
+- scripts/paddle_ocr.py: optional PaddleOCR subprocess
+- requirements.txt: Python OCR dependencies
+- .env.example: runtime env variables
+- styles/passport-extractor.css: route styling
+
+Runtime
+- Next.js pages router
+- Frontend route: /passport-extractor
+- API route: POST /api/passport-extractor
+- Template storage: browser localStorage key pe_templates
+
+Modes
+- health
+- detect
+- extract
+
+Hard boundaries
+- Keep repo focused on passport extraction
+- Keep template mode VLM-only
+- Allow PaddleOCR only for default no-template extraction
+- Do not commit .env.local, .venv, node_modules, .next, or secrets
+
+Validation
+- npm run build
+- curl POST /api/passport-extractor mode=health
+- optional: .venv/bin/python scripts/paddle_ocr.py --health

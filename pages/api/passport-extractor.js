@@ -117,6 +117,20 @@ function withMeta(payload, meta) {
   return { result: payload, _meta: meta };
 }
 
+function withNonEmptyExtraction(payload, rawText) {
+  if (
+    payload &&
+    typeof payload === 'object' &&
+    !Array.isArray(payload) &&
+    Object.keys(payload).length === 0 &&
+    String(rawText || '').trim()
+  ) {
+    return { RAW_MODEL_OUTPUT: String(rawText).trim() };
+  }
+
+  return payload;
+}
+
 function imageExtension(mimeType) {
   if (mimeType === 'image/png') return '.png';
   if (mimeType === 'image/webp') return '.webp';
