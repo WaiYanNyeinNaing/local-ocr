@@ -7,12 +7,20 @@ Minimal Next.js UI for extracting passport fields with local Ollama models.
 - Node.js 20+
 - npm
 - Ollama running locally
+- Python 3.10+ if you want the optional PaddleOCR default-mode engine
 
 ## Install App Dependencies
 
 ```bash
 npm install
 cp .env.example .env.local
+```
+
+Optional PaddleOCR dependencies:
+
+```bash
+python3 -m venv .venv
+.venv/bin/pip install -r requirements.txt
 ```
 
 Default `.env.local`:
@@ -24,6 +32,9 @@ OLLAMA_MODEL=qwen2.5vl:7b
 OLLAMA_TIMEOUT_MS=120000
 OLLAMA_KEEP_ALIVE=30m
 OLLAMA_MAX_TOKENS=1024
+PADDLE_OCR_PYTHON=.venv/bin/python
+PADDLE_OCR_LANGS=en,ar
+PADDLE_OCR_TIMEOUT_MS=120000
 ```
 
 ## Install Ollama Models
@@ -66,6 +77,8 @@ npm run build
 
 - Templates are stored in browser `localStorage` under `pe_templates`.
 - The Extract tab supports saved templates or default `Extract all visible fields` mode.
+- Default mode can use either VLM extraction or PaddleOCR raw text blocks.
+- Saved templates always use the VLM extraction path.
 - The API route is `POST /api/passport-extractor`.
 - Requests send `think:false`, `keep_alive`, and `max_tokens` to Ollama.
 - The UI displays total processing time and model API time after extraction.

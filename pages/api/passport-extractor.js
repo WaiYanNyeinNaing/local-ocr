@@ -1,9 +1,21 @@
+import { spawn } from 'child_process';
+import { mkdtemp, rm, writeFile } from 'fs/promises';
+import { tmpdir } from 'os';
+import path from 'path';
+
 const OLLAMA_BASE_URL = (process.env.OLLAMA_BASE_URL || 'http://localhost:11434/v1').replace(/\/+$/, '');
 const OLLAMA_API_KEY = process.env.OLLAMA_API_KEY || 'ollama';
 const DEFAULT_MODEL = process.env.OLLAMA_MODEL || 'qwen2.5vl:7b';
 const OLLAMA_TIMEOUT_MS = Number(process.env.OLLAMA_TIMEOUT_MS || 120000);
 const OLLAMA_KEEP_ALIVE = process.env.OLLAMA_KEEP_ALIVE || '30m';
 const OLLAMA_MAX_TOKENS = Number(process.env.OLLAMA_MAX_TOKENS || 1024);
+const OCR_TIMEOUT_MS = Number(process.env.PADDLE_OCR_TIMEOUT_MS || 120000);
+const PYTHON_BIN = process.env.PADDLE_OCR_PYTHON || 'python3';
+const OCR_SCRIPT = process.env.PADDLE_OCR_SCRIPT || path.join(process.cwd(), 'scripts', 'paddle_ocr.py');
+const OCR_LANGS = (process.env.PADDLE_OCR_LANGS || 'en,ar')
+  .split(',')
+  .map((lang) => lang.trim())
+  .filter(Boolean);
 
 const BASE_SYSTEM_PROMPT = `You are a strict passport OCR extraction engine.
 
@@ -105,6 +117,85 @@ function withMeta(payload, meta) {
   return { result: payload, _meta: meta };
 }
 
+function imageExtension(mimeType) {
+  if (mimeType === 'image/png') return '.png';
+  if (mimeType === 'image/webp') return '.webp';
+  return '.jpg';
+}
+
+function runCommand(command, args, timeoutMs = OCR_TIMEOUT_MS) {
+  return new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      cwd: process.cwd(),
+      env: process.env,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    let stdout = '';
+    let stderr = '';
+    const timer = setTimeout(() => {
+      child.kill('SIGTERM');
+      reject(new Error(`${command} timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+
+    child.stdout.on('data', (chunk) => {
+      stdout += chunk;
+    });
+    child.stderr.on('data', (chunk) => {
+      stderr += chunk;
+    });
+    child.on('error', reject);
+    child.on('close', (code) => {
+      clearTimeout(timer);
+      if (code === 0) {
+        resolve({ stdout, stderr });
+        return;
+      }
+      reject(new Error(`${command} exited with code ${code}: ${stderr || stdout}`));
+    });
+  });
+}
+
+async function withTempImage(imageBase64, imageMimeType, callback) {
+  const dir = await mkdtemp(path.join(tmpdir(), 'passport-ocr-'));
+  const imagePath = path.join(dir, `upload${imageExtension(imageMimeType)}`);
+
+  try {
+    await writeFile(imagePath, Buffer.from(imageBase64, 'base64'));
+    return await callback(imagePath);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+}
+
+async function runPaddleOcr(imagePath) {
+  const startedAt = Date.now();
+  const { stdout } = await runCommand(PYTHON_BIN, [
+    OCR_SCRIPT,
+    '--image',
+    imagePath,
+    '--langs',
+    OCR_LANGS.join(','),
+  ]);
+  return {
+    ocr: JSON.parse(stdout),
+    meta: {
+      engine: 'paddleocr',
+      paddle_ocr_ms: Date.now() - startedAt,
+      langs: OCR_LANGS,
+    },
+  };
+}
+
+function paddleOcrFields(ocr) {
+  return (ocr?.blocks || []).map((block) => ({
+    field_name: `OCR_BLOCK_${String((block.index ?? 0) + 1).padStart(3, '0')}`,
+    label: `#${block.index ?? ''} ${block.lang || 'ocr'}`.trim(),
+    value: block.text || null,
+    confidence: block.confidence ?? null,
+  }));
+}
+
 async function generateWithModel({
   systemPrompt = BASE_SYSTEM_PROMPT,
   userPrompt,
@@ -181,8 +272,9 @@ export default async function handler(req, res) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const { mode, imageBase64, imageMimeType, fields, systemPrompt, model } = req.body || {};
+  const { mode, imageBase64, imageMimeType, fields, systemPrompt, model, engine } = req.body || {};
   const selectedModel = resolveModel(model);
+  const selectedEngine = systemPrompt ? 'vlm' : String(engine || 'vlm').trim().toLowerCase();
   const requestStartedAt = Date.now();
 
   if (mode === 'health') {
@@ -243,7 +335,7 @@ Requirements:
         imageMimeType,
         model: selectedModel,
       });
-      const payload = sanitizeResults(extractJson(generation.text));
+      const payload = withNonEmptyExtraction(sanitizeResults(extractJson(generation.text)), generation.text);
       return res.status(200).json(
         withMeta(payload, {
           ...generation.meta,
@@ -253,6 +345,18 @@ Requirements:
     }
 
     if (mode === 'extract') {
+      if (!systemPrompt && selectedEngine === 'paddleocr') {
+        const result = await withTempImage(imageBase64, imageMimeType, runPaddleOcr);
+        return res.status(200).json({
+          detected_fields: paddleOcrFields(result.ocr),
+          ocr: result.ocr,
+          _meta: {
+            ...result.meta,
+            processing_ms: Date.now() - requestStartedAt,
+          },
+        });
+      }
+
       const extractionPrompt = systemPrompt || EXTRACT_ALL_PROMPT;
 
       const generation = await generateWithModel({
