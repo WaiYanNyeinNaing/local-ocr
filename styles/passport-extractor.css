@@ -296,12 +296,9 @@
 
 .pe-mode-picker {
   display: grid;
-  grid-template-columns: minmax(240px, 0.85fr) minmax(280px, 1.15fr);
   gap: 14px;
-  align-items: stretch;
 }
 
-.pe-mode-default,
 .pe-mode-template-panel,
 .pe-mode-preview,
 .pe-mode-empty,
@@ -311,30 +308,6 @@
   background: rgba(248, 250, 252, 0.74);
 }
 
-.pe-mode-default {
-  display: grid;
-  gap: 8px;
-  padding: 18px;
-  text-align: left;
-  cursor: pointer;
-  color: #111827;
-}
-
-.pe-mode-default.selected {
-  border-color: rgba(17, 24, 39, 0.38);
-  background:
-    linear-gradient(135deg, rgba(17, 24, 39, 0.07), rgba(255, 255, 255, 0.78)),
-    #fff;
-  box-shadow: 0 18px 36px rgba(15, 23, 42, 0.08);
-}
-
-.pe-mode-default strong,
-.pe-mode-current strong {
-  font-size: 1.02rem;
-}
-
-.pe-mode-default span:last-child,
-.pe-mode-current p,
 .pe-mode-preview p,
 .pe-mode-empty p {
   margin: 0;
@@ -455,11 +428,6 @@
   }
 
   .pe-result-row {
-    grid-template-columns: 1fr;
-  }
-
-  .pe-mode-picker,
-  .pe-mode-template-panel {
     grid-template-columns: 1fr;
   }
 

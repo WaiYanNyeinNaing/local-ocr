@@ -14,6 +14,18 @@ const MODEL_OPTIONS = [
     helper: 'Small local Qwen model. Use this only if your Ollama model supports the selected task.',
   },
 ];
+const DEFAULT_ENGINE_OPTIONS = [
+  {
+    label: 'VLM extraction',
+    value: 'vlm',
+    helper: 'Uses the selected vision model to return structured passport fields.',
+  },
+  {
+    label: 'PaddleOCR text',
+    value: 'paddleocr',
+    helper: 'Runs Arabic + English OCR and displays raw text blocks. Default mode only.',
+  },
+];
 
 export default function PassportExtractorPage() {
   const [tab, setTab] = useState('create');
@@ -220,6 +232,12 @@ function formatMs(value) {
   if (!Number.isFinite(ms)) return null;
   if (ms < 1000) return `${Math.round(ms)} ms`;
   return `${(ms / 1000).toFixed(1)} sec`;
+}
+
+function modelTimeLabel(meta) {
+  if (formatMs(meta?.model_ms)) return `model ${formatMs(meta.model_ms)}`;
+  if (formatMs(meta?.paddle_ocr_ms)) return `PaddleOCR ${formatMs(meta.paddle_ocr_ms)}`;
+  return null;
 }
 
 function chooseImage(onPick) {
@@ -594,6 +612,7 @@ function ExtractTab({ selectedTemplateId, setSelectedTemplateId, setTab, selecte
   const [loading, setLoading] = useState(false);
   const [results, setResults] = useState(null);
   const [loaded, setLoaded] = useState(false);
+  const [defaultEngine, setDefaultEngine] = useState(DEFAULT_ENGINE_OPTIONS[0].value);
 
   useEffect(() => {
     const nextTemplates = loadTemplates();
@@ -617,6 +636,7 @@ function ExtractTab({ selectedTemplateId, setSelectedTemplateId, setTab, selecte
         mode: 'extract',
         imageBase64: base64,
         imageMimeType: mimeType,
+        engine: selectedTemplate ? 'vlm' : defaultEngine,
         model: selectedModel,
         systemPrompt: selectedTemplate
           ? selectedFields.length
@@ -642,7 +662,7 @@ function ExtractTab({ selectedTemplateId, setSelectedTemplateId, setTab, selecte
     } finally {
       setLoading(false);
     }
-  }, [imageFile, selectedFields, selectedModel, selectedTemplate, setError, setSuccess]);
+  }, [defaultEngine, imageFile, selectedFields, selectedModel, selectedTemplate, setError, setSuccess]);
 
   if (!loaded) {
     return <div className="pe-loading">Loading templates...</div>;
@@ -653,18 +673,6 @@ function ExtractTab({ selectedTemplateId, setSelectedTemplateId, setTab, selecte
       <section className="pe-card">
         <h2>1. Select extraction mode</h2>
         <div className="pe-mode-picker">
-          <button
-            className={`pe-mode-default ${!selectedTemplateId ? 'selected' : ''}`}
-            onClick={() => {
-              setSelectedTemplateId('');
-              setResults(null);
-            }}
-          >
-            <span className="pe-mode-eyebrow">Default</span>
-            <strong>Extract all visible fields</strong>
-            <span>No template needed. The VLM returns every passport field it can read.</span>
-          </button>
-
           <div className="pe-mode-template-panel">
             <label className="pe-field pe-field-compact">
               <span>Saved template</span>
@@ -703,6 +711,23 @@ function ExtractTab({ selectedTemplateId, setSelectedTemplateId, setTab, selecte
             <>
               <span>Default output</span>
               <p>Document number, names, dates, places, authority fields, visible IDs, and MRZ lines.</p>
+              <label className="pe-field pe-field-compact">
+                <span>Default extraction engine</span>
+                <select
+                  value={defaultEngine}
+                  onChange={(event) => {
+                    setDefaultEngine(event.target.value);
+                    setResults(null);
+                  }}
+                >
+                  {DEFAULT_ENGINE_OPTIONS.map((option) => (
+                    <option key={option.value} value={option.value}>
+                      {option.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <p>{DEFAULT_ENGINE_OPTIONS.find((option) => option.value === defaultEngine)?.helper}</p>
             </>
           )}
         </div>
@@ -746,10 +771,18 @@ function ExtractTab({ selectedTemplateId, setSelectedTemplateId, setTab, selecte
         <p className="pe-template-summary">
           {selectedTemplate
             ? `Template fields: ${selectedFields.map((field) => field.label).join(', ')}`
-            : 'Default mode: extract all visible passport fields.'}
+            : `Default mode: ${DEFAULT_ENGINE_OPTIONS.find((option) => option.value === defaultEngine)?.label}.`}
         </p>
         <p className="pe-template-summary">
-          Inference model: <code>{selectedModel}</code>
+          {selectedTemplate || defaultEngine === 'vlm' ? (
+            <>
+              Inference model: <code>{selectedModel}</code>
+            </>
+          ) : (
+            <>
+              OCR engine: <code>PaddleOCR</code>
+            </>
+          )}
         </p>
         <div className="pe-upload-zone" onClick={() => chooseImage((file) => {
           setImageFile(file);
@@ -780,7 +813,7 @@ function ExtractTab({ selectedTemplateId, setSelectedTemplateId, setTab, selecte
                   <span className="pe-result-name">Processing time</span>
                   <span className="pe-result-value">
                     {formatMs(results.raw._meta.client_processing_ms)}
-                    {formatMs(results.raw._meta.model_ms) ? ` (model ${formatMs(results.raw._meta.model_ms)})` : ''}
+                    {modelTimeLabel(results.raw._meta) ? ` (${modelTimeLabel(results.raw._meta)})` : ''}
                   </span>
                 </div>
               )}
