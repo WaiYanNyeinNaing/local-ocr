@@ -25,6 +25,11 @@ Core rules:
 - Do not guess, infer, complete, translate, or invent values.
 - If a requested value is missing, cropped, blurry, or uncertain, use null.
 - Preserve values exactly as printed, including spaces, punctuation, slash-separated dates, and MRZ text.
+- Preserve every visible script exactly as printed, including Arabic and English.
+- Do not transliterate Arabic to English and do not translate English to Arabic.
+- Never create a language variant that is not visibly printed on the passport image.
+- If a field is printed only in English, return only the English text; if printed only in Arabic, return only the Arabic text.
+- When the passport prints the same field in multiple languages, keep every visible language variant instead of choosing only English.
 - Use uppercase snake_case field keys.`;
 
 const EXTRACT_ALL_PROMPT = `Extract all visible passport fields from the image.
@@ -33,11 +38,17 @@ Return contract:
 - Return exactly one JSON object.
 - Use stable uppercase snake_case keys.
 - Include all visible passport identity fields, dates, document numbers, places, authority fields, and MRZ lines.
+- Include Arabic and English text when both are visible.
+- For bilingual fields, return separate language-specific keys only for languages visibly printed on the image, for example SURNAME_EN and SURNAME_AR.
+- Do not create *_AR keys unless Arabic text is visible for that field.
+- Do not create *_EN keys unless English text is visible for that field.
+- If a bilingual value is visually tied to one field but you cannot confidently separate language-specific keys, include both visible variants in the field value separated by " | ".
+- Do not prefer English over Arabic.
 - Use null only when a label is visible but the value is not readable.
 - Do not add explanations, confidence scores, markdown, or fields that are not visible.
 
 Suggested keys when visible:
-TYPE, COUNTRY_CODE, PASSPORT_NUMBER, SURNAME, GIVEN_NAMES, SEX, NATIONALITY, DATE_OF_BIRTH, PLACE_OF_BIRTH, DATE_OF_ISSUE, DATE_OF_EXPIRY, PLACE_OF_ISSUE, AUTHORITY, NATIONAL_ID, FATHER_NAME, MOTHER_NAME, MRZ_LINE_1, MRZ_LINE_2.`;
+TYPE, COUNTRY_CODE, PASSPORT_NUMBER, SURNAME_EN, SURNAME_AR, GIVEN_NAMES_EN, GIVEN_NAMES_AR, SEX_EN, SEX_AR, NATIONALITY_EN, NATIONALITY_AR, DATE_OF_BIRTH, PLACE_OF_BIRTH_EN, PLACE_OF_BIRTH_AR, DATE_OF_ISSUE, DATE_OF_EXPIRY, PLACE_OF_ISSUE_EN, PLACE_OF_ISSUE_AR, AUTHORITY_EN, AUTHORITY_AR, NATIONAL_ID, FATHER_NAME_EN, FATHER_NAME_AR, MOTHER_NAME_EN, MOTHER_NAME_AR, MRZ_LINE_1, MRZ_LINE_2.`;
 
 export const config = {
   maxDuration: 120,
@@ -129,6 +140,33 @@ function withNonEmptyExtraction(payload, rawText) {
   }
 
   return payload;
+}
+
+function normalizeOutputKey(key) {
+  if (key === '_meta') return key;
+  return String(key)
+    .trim()
+    .toUpperCase()
+    .replace(/[^A-Z0-9_]+/g, '_')
+    .replace(/^_+|_+$/g, '') || 'FIELD';
+}
+
+function normalizeFlatOutputKeys(payload) {
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    return payload;
+  }
+
+  const next = {};
+  for (const [key, value] of Object.entries(payload)) {
+    let normalizedKey = normalizeOutputKey(key);
+    let suffix = 2;
+    while (Object.hasOwn(next, normalizedKey)) {
+      normalizedKey = `${normalizeOutputKey(key)}_${suffix}`;
+      suffix += 1;
+    }
+    next[normalizedKey] = value;
+  }
+  return next;
 }
 
 function imageExtension(mimeType) {
@@ -344,6 +382,12 @@ Requirements:
 - field_name must be stable uppercase snake_case, for example PASSPORT_NUMBER or DATE_OF_BIRTH.
 - label must be a short human-readable label.
 - value must be the exact visible sample value or null.
+- If the requested field is visible in both Arabic and English, include both visible values in value separated by " | ".
+- If the user did not explicitly ask for a specific language, keep field_name language-neutral, for example SURNAME.
+- If the user asks for Arabic or English explicitly, make that language clear in field_name and label, for example SURNAME_AR or SURNAME_EN.
+- If the requested language is not visibly printed, value must be null.
+- Never translate or transliterate to satisfy a language request.
+- Do not drop Arabic text when it is visible.
 - Do not add fields the user did not ask for.`,
         imageBase64,
         imageMimeType,
@@ -378,13 +422,15 @@ Requirements:
 
 ${extractionPrompt}`,
         userPrompt: systemPrompt
-          ? 'Extract the configured passport fields from this image. Return only the JSON object required by the template.'
-          : 'Extract all visible passport fields from this image. Return only one flat JSON object.',
+          ? 'Extract the configured passport fields from this image. If a configured field is printed in both Arabic and English, preserve both visible variants in that field value separated by " | ". Do not translate or create missing language variants. Return only the JSON object required by the template.'
+          : 'Extract all visible passport fields from this image, including Arabic and English text when both are present. Do not translate or create language variants that are not visibly printed. Return only one flat JSON object.',
         imageBase64,
         imageMimeType,
         model: selectedModel,
       });
-      const payload = sanitizeResults(extractJson(generation.text));
+      const payload = systemPrompt
+        ? sanitizeResults(extractJson(generation.text))
+        : normalizeFlatOutputKeys(sanitizeResults(extractJson(generation.text)));
       return res.status(200).json(
         withMeta(payload, {
           ...generation.meta,

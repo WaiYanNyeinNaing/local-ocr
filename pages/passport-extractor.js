@@ -114,9 +114,13 @@ Return contract:
 - Return exactly one JSON object.
 - Use exactly these JSON keys and no others: ${jsonKeys.map((key) => `"${key}"`).join(', ')}.
 - Each value must be a string copied from the passport image or null.
+- If one requested field is printed in both Arabic and English, include both visible values in that same string separated by " | ".
+- If the field is printed only in one language, return only that visible text.
 - If a field is not visible or uncertain, use null.
 - Do not guess, infer, translate, normalize dates, or invent missing values.
-- Preserve spelling, punctuation, spaces, slashes, hyphens, and MRZ text exactly as visible.
+- Preserve Arabic and English exactly as visible, including spelling, punctuation, spaces, slashes, hyphens, and MRZ text.
+- Do not transliterate Arabic, translate labels, or choose English-only when Arabic is also visible.
+- Never create Arabic or English text that is not visibly printed in the image.
 
 Example:
 ${JSON.stringify(example, null, 2)}`;
